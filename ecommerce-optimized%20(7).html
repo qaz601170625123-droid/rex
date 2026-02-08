@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CANDY BOSS - 購物商城</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <style>
+        /* 保留原有的 CSS 樣式並優化手機觸控 */
+        :root {
+            --primary: #FFD700; --secondary: #1a1a1a; --bg-dark: #0a0a0a;
+            --text-light: #ffffff; --accent-green: #00FF00;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { font-family: 'Noto Sans TC', sans-serif; background: var(--bg-dark); color: var(--text-light); min-height: 100vh; }
+        .navbar { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); padding: 15px; border-bottom: 2px solid var(--primary); position: sticky; top: 0; z-index: 100; display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-family: 'Orbitron', sans-serif; font-size: 20px; font-weight: 900; color: var(--primary); }
+        .container { max-width: 1200px; margin: 0 auto; padding: 15px; }
+        .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        @media (min-width: 768px) { .products-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); } }
+        .product-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 215, 0, 0.3); border-radius: 12px; padding: 12px; }
+        .product-image { width: 100%; aspect-ratio: 1/1; background: #222; border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+        .product-image img { width: 100%; height: 100%; object-fit: cover; }
+        .product-price { color: var(--primary); font-weight: 900; font-size: 18px; }
+        .add-to-cart-btn { width: 100%; background: var(--primary); border: none; padding: 10px; border-radius: 8px; font-weight: 700; margin-top: 10px; }
+        /* 購物車與彈窗樣式 (簡化顯示) */
+        .cart-float { position: fixed; bottom: 20px; right: 20px; width: 60px; height: 60px; background: var(--primary); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; z-index: 99; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        .cart-badge { position: absolute; top: 0; right: 0; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center; padding: 20px; }
+        .modal.active { display: flex; }
+        .modal-content { background: #1a1a1a; width: 100%; max-width: 500px; border-radius: 15px; padding: 20px; border: 1px solid var(--primary); max-height: 90vh; overflow-y: auto; }
+        .spec-option { border: 1px solid #444; padding: 10px; margin: 5px 0; border-radius: 8px; }
+        .spec-option.selected { border-color: var(--primary); background: rgba(255,215,0,0.1); }
+        #loading-status { text-align: center; padding: 50px; color: var(--primary); font-weight: bold; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="logo">🍬 CANDY BOSS</div>
+        <button onclick="openOrderSearch()" style="background:none; border:1px solid var(--primary); color:var(--primary); padding:5px 10px; border-radius:15px;">查詢訂單</button>
+    </nav>
+
+    <div class="container">
+        <div id="loading-status">⏳ 正在連線至 Google 資料庫...</div>
+        <div class="products-grid" id="productsGrid"></div>
+    </div>
+
+    <div class="cart-float" onclick="toggleCart()">🛒<div class="cart-badge" id="cartBadge">0</div></div>
+
+    <div class="modal" id="specModal">
+        <div class="modal-content">
+            <h2 id="specModalTitle" style="color:var(--primary); margin-bottom:15px;"></h2>
+            <div id="specOptions"></div>
+            <button class="add-to-cart-btn" onclick="confirmAddToCart()" style="margin-top:20px;">加入購物車</button>
+            <button onclick="closeSpecModal()" style="width:100%; background:none; color:#999; border:none; margin-top:10px;">取消</button>
+        </div>
+    </div>
+
+    <script>
+        // 請務必確認以下資訊正確
+        const SHEET_ID = '1v1ecAE2XYAJgCnT3jbUp6Lfz64npIAzdiepzy-PSr_4'; 
+        const API_KEY = 'AIzaSyD3zhGgpz3SBgp62_1GhTql2CW5vrzI7NA'; 
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbywjsDQeIkVbhg9Ah2Z62oWi4fx2WlOeQUhFP-CxtnPYBgOW0_eQ3qdccB4AISV8dIZ/exec';
+
+        let products = [];
+        let productSpecs = {};
+        let cart = [];
+        let currentProduct = null;
+        let selectedSpec = null;
+
+        // 初始化：網頁載入後自動執行
+        window.onload = function() {
+            loadProductsData();
+        };
+
+        async function loadProductsData() {
+            const statusEl = document.getElementById('loading-status');
+            try {
+                // 1. 抓取商品列表
+                const pRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/商品列表?key=${API_KEY}`);
+                const pData = await pRes.json();
+                
+                if (pData.error) throw new Error(pData.error.message);
+
+                products = pData.values.slice(1).map(row => ({
+                    id: row[0], name: row[1], image: row[2]
+                }));
+
+                // 2. 抓取規格表
+                const sRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/商品規格表?key=${API_KEY}`);
+                const sData = await sRes.json();
+
+                sData.values.slice(1).forEach(row => {
+                    const pid = row[0];
+                    if (!productSpecs[pid]) productSpecs[pid] = [];
+                    productSpecs[pid].push({
+                        specName: row[2], price: parseInt(row[3]), stock: parseInt(row[4]), image: row[5]
+                    });
+                });
+
+                statusEl.style.display = 'none';
+                displayProducts();
+            } catch (err) {
+                statusEl.innerHTML = `❌ 連線失敗<br><small style="color:red">${err.message}</small><br><br>請確認試算表已設為「知道連結的所有人皆可檢視」`;
+            }
+        }
+
+        function displayProducts() {
+            const grid = document.getElementById('productsGrid');
+            grid.innerHTML = products.map(p => {
+                const specs = productSpecs[p.id] || [];
+                const priceText = specs.length > 0 ? `$${specs[0].price}` : '未定價';
+                return `
+                    <div class="product-card" onclick="openSpecModal('${p.id}')">
+                        <div class="product-image"><img src="${p.image}" onerror="this.src='https://via.placeholder.com/150'"></div>
+                        <div style="font-weight:700; margin-bottom:5px;">${p.name}</div>
+                        <div class="product-price">${priceText}</div>
+                        <button class="add-to-cart-btn">選購</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function openSpecModal(pid) {
+            currentProduct = products.find(p => p.id === pid);
+            const specs = productSpecs[pid] || [];
+            document.getElementById('specModalTitle').innerText = currentProduct.name;
+            document.getElementById('specOptions').innerHTML = specs.map((s, i) => `
+                <div class="spec-option" id="spec-${i}" onclick="selectSpec(${i})">
+                    ${s.specName} - $${s.price} (庫存: ${s.stock})
+                </div>
+            `).join('');
+            document.getElementById('specModal').classList.add('active');
+        }
+
+        function selectSpec(idx) {
+            selectedSpec = productSpecs[currentProduct.id][idx];
+            document.querySelectorAll('.spec-option').forEach((el, i) => {
+                el.classList.toggle('selected', i === idx);
+            });
+        }
+
+        function closeSpecModal() {
+            document.getElementById('specModal').classList.remove('active');
+            selectedSpec = null;
+        }
+
+        function confirmAddToCart() {
+            if (!selectedSpec) return alert('請先選擇一個規格');
+            cart.push({ ...selectedSpec, productName: currentProduct.name });
+            document.getElementById('cartBadge').innerText = cart.length;
+            closeSpecModal();
+            alert('已加入購物車');
+        }
+
+        function toggleCart() {
+            // 此處可擴充顯示購物車清單
+            alert('購物車內共有 ' + cart.length + ' 件商品');
+        }
+    </script>
+</body>
+</html>
